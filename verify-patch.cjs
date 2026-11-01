@@ -153,6 +153,17 @@ for (const item of sections) {
     }
 }
 
+// ---- 3.5 日期缓存读取点空值保护 (v2.1.1) ----
+// 缓存前缀构建器里形如 f=fce(u).content 的无保护读取，日期函数返回 null 时会崩溃
+const dateFnName = findFnForLiteral('name:"Current Date",source:"current_date"');
+if (dateFnName) {
+    const escaped = dateFnName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const guardRe = new RegExp('=' + escaped + '\\([A-Za-z_$][\\w$]*\\)\\?\\.content');
+    check('日期缓存读取点已加空值保护 (' + dateFnName + ')', guardRe.test(src));
+} else {
+    check('日期缓存读取点已加空值保护', false, '未找到日期函数');
+}
+
 // ---- 5. CLI Prefix 实际返回空串 ----
 const jmeName = findFnForLiteral('name:"CLI Prefix",source:"cli_prefix"');
 const jmeBody = jmeName ? extractFn(jmeName) : null;

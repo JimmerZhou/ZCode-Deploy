@@ -3,6 +3,11 @@
 # ZCode 一键人格部署工具  v2.1
 # 适配 ZCode 2026-09-19 之后重新打包的 zcode.cjs
 #
+# v2.1.1 (2026-11-01) 修复部署后新对话崩溃:
+#   补丁 4 让日期函数 return null 后，缓存前缀构建器里的 f=fce(u).content
+#   无保护读取会抛 "Cannot read properties of null (reading 'content')"。
+#   新增补丁 7: 该读取点改为 ?. 可选链（函数名复用补丁 4 的定位结果）。
+#
 # v2.1 (2026-10-31) 适配 ZCode 2026-10-29 重新打包的版本：
 #   1. 补丁 1 锚点泛化: 身份文案可能是 "interactive agent" 或 "interactive coding agent"，
 #      改为正则匹配 "You are ZCode, an interactive ..."，文案微调不再失效
@@ -32,7 +37,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$ToolVersion  = "2.1.0"
+$ToolVersion  = "2.1.1"
 
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PromptFile  = Join-Path $ScriptDir "人格.txt"
@@ -238,6 +243,28 @@ function Patch-NullSection([string]$c, [string]$literal) {
     return [pscustomobject]@{ Status='ok'; Content=$new; Name=$fn.Name }
 }
 
+# 补丁 7: 缓存前缀构建器对日期函数结果有无保护的 .content 读取（v2.1.1）
+# 形如 f=fce(u).content —— 日期函数 return null 后此处必然崩溃
+# "Cannot read properties of null (reading 'content')"。改为 ?. 可选链。
+# 函数名复用补丁 4 定位到的产物函数名，不写死压缩名。
+function Patch-DateCacheGuard([string]$c, [string]$fnName) {
+    if ([string]::IsNullOrWhiteSpace($fnName)) {
+        return [pscustomobject]@{ Status='missing'; Content=$c; Name='' }
+    }
+    $rxGuarded = [regex]('=' + [regex]::Escape($fnName) + '\([A-Za-z_$][\w$]*\)\?\.content')
+    if ($rxGuarded.IsMatch($c)) {
+        return [pscustomobject]@{ Status='skip'; Content=$c; Name=$fnName }
+    }
+    $rx = [regex]('=' + [regex]::Escape($fnName) + '\(([A-Za-z_$][\w$]*)\)\.content')
+    if (-not $rx.IsMatch($c)) {
+        return [pscustomobject]@{ Status='missing'; Content=$c; Name=$fnName }
+    }
+    $m = $rx.Match($c)
+    $rep = '=' + $fnName + '(' + $m.Groups[1].Value + ')?.content'
+    $new = $c.Remove($m.Index, $m.Length).Insert($m.Index, $rep)
+    return [pscustomobject]@{ Status='ok'; Content=$new; Name=$fnName }
+}
+
 # ---------- 备份 ----------
 function Archive-Current([string]$file, [string]$kind) {
     if (-not (Test-Path -LiteralPath $BackupDir)) {
@@ -296,6 +323,11 @@ function Get-PatchReport([string]$c) {
     [void]$rows.Add([pscustomobject]@{ Name='customSystemPrompt 读人格文件'; Ok=$c.Contains($Marker) })
     [void]$rows.Add([pscustomobject]@{ Name='Agent Identity 读人格文件'; Ok=(Test-NullApplied $c $LitIdentity) -or ($c.Contains($Marker) -and (Test-NullApplied $c $LitDate)) })
     [void]$rows.Add([pscustomobject]@{ Name='日期提醒已移除'; Ok=(Test-NullApplied $c $LitDate) })
+    $dateFn = $null
+    $dIdx = $c.IndexOf($LitDate, [System.StringComparison]::Ordinal)
+    if ($dIdx -ge 0) { $dateFn = Get-EnclosingFunction -Content $c -AnchorIndex $dIdx }
+    $dateFnName = if ($dateFn) { $dateFn.Name } else { '' }
+    [void]$rows.Add([pscustomobject]@{ Name='日期缓存读取空值保护'; Ok=($dateFnName -ne '' -and [regex]::IsMatch($c, ('=' + [regex]::Escape($dateFnName) + '\([A-Za-z_$][\w$]*\)\?\.content'))) })
     [void]$rows.Add([pscustomobject]@{ Name='Skills 列表已移除'; Ok=(Test-NullApplied $c $LitSkills) })
     [void]$rows.Add([pscustomobject]@{ Name='User Context 已移除'; Ok=(Test-NullApplied $c $LitUserCtx) })
     return $rows
@@ -447,6 +479,7 @@ switch ($Action) {
         $r = Patch-CustomPrompt $content $expr;            $content = $r.Content; [void]$results.Add([pscustomobject]@{ Id=2; Label='customSystemPrompt 读人格文件'; Status=$r.Status; Fn=$r.Name })
         $r = Patch-AgentIdentity $content $expr;           $content = $r.Content; [void]$results.Add([pscustomobject]@{ Id=3; Label='Agent Identity 读人格文件'; Status=$r.Status; Fn=$r.Name })
         $r = Patch-NullSection $content $LitDate;          $content = $r.Content; [void]$results.Add([pscustomobject]@{ Id=4; Label='日期提醒移除'; Status=$r.Status; Fn=$r.Name })
+        $r = Patch-DateCacheGuard $content $r.Name;        $content = $r.Content; [void]$results.Add([pscustomobject]@{ Id=7; Label='日期缓存读取空值保护'; Status=$r.Status; Fn=$r.Name })
         $r = Patch-NullSection $content $LitSkills;        $content = $r.Content; [void]$results.Add([pscustomobject]@{ Id=5; Label='Skills 列表移除'; Status=$r.Status; Fn=$r.Name })
         $r = Patch-NullSection $content $LitUserCtx;       $content = $r.Content; [void]$results.Add([pscustomobject]@{ Id=6; Label='User Context 移除'; Status=$r.Status; Fn=$r.Name })
 

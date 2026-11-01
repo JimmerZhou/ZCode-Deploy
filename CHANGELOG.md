@@ -2,6 +2,15 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化。
 
+## [2.1.1] - 2026-11-01
+
+修复 v2.1.0 部署后新对话必崩溃的问题：
+
+### 修复
+- **补丁 7（新增）**：缓存前缀构建器 `$5o` 里形如 `f=fce(u).content` 的读取对返回值无 null 保护，补丁 4 让日期函数 `return null` 后此处抛 `Cannot read properties of null (reading 'content')`（Turn execution failed）。现改为 `?.` 可选链；函数名复用补丁 4 定位到的产物函数名，不写死压缩名
+- 该调用点是全 bundle 唯一的无保护读取（z8e/Mxt 的调用点均有 `&&` 守卫），已逐一枚举确认
+- `verify-patch.cjs` 新增第 10 项检查：日期缓存读取点空值保护
+
 ## [2.1.0] - 2026-10-31
 
 适配 ZCode 2026-10-29 重新打包的 `zcode.cjs`（15,405,921 bytes）：
